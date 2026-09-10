@@ -1,0 +1,194 @@
+{
+ "photoswitches": {
+  "n": 391,
+  "obj_min": 267.0,
+  "obj_max": 623.0,
+  "obj_mean": 388.32736572890025,
+  "components": {
+   "SMILES": 391
+  }
+ },
+ "bh_reaction_1": {
+  "n": 790,
+  "obj_min": 0.0,
+  "obj_max": 86.59757822,
+  "obj_mean": 33.394081805494935,
+  "components": {
+   "additive": 22,
+   "aryl halide": 3,
+   "base": 3,
+   "ligand": 4
+  }
+ },
+ "additives_plate_1": {
+  "n": 720,
+  "obj_min": 0.0,
+  "obj_max": 86045.92668,
+  "obj_mean": 31774.736835881944,
+  "components": {
+   "additives": 720
+  }
+ },
+ "redox_mer": {
+  "n": 1407,
+  "obj_min": -3.37772747,
+  "obj_max": -1.54135178,
+  "obj_mean": -2.3194747189125797,
+  "components": {
+   "SMILES": 1407
+  }
+ },
+ "bh_reaction_2": {
+  "n": 792,
+  "obj_min": 0.0,
+  "obj_max": 68.2481271,
+  "obj_mean": 20.12727376238889,
+  "components": {
+   "additive": 22,
+   "aryl halide": 3,
+   "base": 3,
+   "ligand": 4
+  }
+ },
+ "bh_reaction_3": {
+  "n": 790,
+  "obj_min": 0.0,
+  "obj_max": 55.56585889,
+  "obj_mean": 24.359775663787342,
+  "components": {
+   "additive": 22,
+   "aryl halide": 3,
+   "base": 3,
+   "ligand": 4
+  }
+ },
+ "bh_reaction_4": {
+  "n": 792,
+  "obj_min": 0.0,
+  "obj_max": 99.99999,
+  "obj_mean": 51.5128398262399,
+  "components": {
+   "additive": 22,
+   "aryl halide": 3,
+   "base": 3,
+   "ligand": 4
+  }
+ },
+ "bh_reaction_5": {
+  "n": 791,
+  "obj_min": 0.0,
+  "obj_max": 98.73132029,
+  "obj_mean": 36.014768021259165,
+  "components": {
+   "additive": 22,
+   "aryl halide": 3,
+   "base": 3,
+   "ligand": 4
+  }
+ },
+ "additives_plate_2": {
+  "n": 720,
+  "obj_min": 0.0,
+  "obj_max": 41520.38558,
+  "obj_mean": 6047.14506695679,
+  "components": {
+   "additives": 720
+  }
+ },
+ "additives_plate_3": {
+  "n": 720,
+  "obj_min": 0.0,
+  "obj_max": 47299.97185,
+  "obj_mean": 3990.452392964506,
+  "components": {
+   "additives": 720
+  }
+ },
+ "additives_plate_4": {
+  "n": 720,
+  "obj_min": 0.0,
+  "obj_max": 49964.35102,
+  "obj_mean": 9725.165799097223,
+  "components": {
+   "additives": 720
+  }
+ },
+ "suzuki_miyaura": {
+  "n": 4620,
+  "obj_min": 0.0,
+  "obj_max": 1.0,
+  "obj_mean": 0.4179896315890625,
+  "components": {
+   "ligand_smiles": 11,
+   "reactant_1_smiles": 7,
+   "reactant_2_smiles": 4,
+   "reagent_1_smiles": 7,
+   "solvent_1_smiles": 4
+  }
+ },
+ "cpa_thiol_imine": {
+  "n": 1075,
+  "obj_min": -0.419377753,
+  "obj_max": 3.134624572,
+  "obj_mean": 0.9876578306055813,
+  "components": {
+   "Catalyst": 43,
+   "Imine": 5,
+   "Thiol": 5
+  }
+ },
+ "bh_full": {
+  "n": 3955,
+  "obj_min": 0.0,
+  "obj_max": 99.99999,
+  "obj_mean": 33.08525887932819,
+  "components": {
+   "Additive": 22,
+   "Aryl halide": 15,
+   "Base": 3,
+   "Ligand": 4
+  }
+ },
+ "suzuki_perera": {
+  "n": 3696,
+  "obj_min": 0.0,
+  "obj_max": 100.0,
+  "obj_mean": 43.62856060606061,
+  "components": {
+   "Base_SMILES": 7,
+   "Electrophile_SMILES": 4,
+   "Ligand_SMILES": 11,
+   "Nucleophile_SMILES": 3,
+   "Solvent_SMILES": 4
+  }
+ },
+ "pce10k": {
+  "n": 4025,
+  "obj_min": 0.0,
+  "obj_max": 11.073341,
+  "obj_mean": 3.4957247926413912,
+  "components": {
+   "SMILES": 4025
+  }
+ },
+ "enamine10k": {
+  "n": 10446,
+  "obj_min": 4.5,
+  "obj_max": 9.9,
+  "obj_mean": 7.625636607313804,
+  "components": {
+   "SMILES": 10446
+  }
+ },
+ "shields": {
+  "n": 1728,
+  "obj_min": 0.0,
+  "obj_max": 100.0,
+  "obj_mean": 19.37470486111111,
+  "components": {
+   "Solvent_SMILES": 4,
+   "Base_SMILES": 4,
+   "Ligand_SMILES": 12
+  }
+ }
+}

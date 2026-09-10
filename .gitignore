@@ -1,0 +1,5 @@
+# lsab embedding cache (python -m lsab.featurize): large and regenerable
+embeddings/
+# the old tree's embedding cache: large and regenerable
+gollum_out/
+__pycache__/
