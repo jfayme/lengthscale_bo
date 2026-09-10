@@ -210,6 +210,18 @@ def embed_component(rep: str, smiles: list[str], **kw) -> tuple[np.ndarray, str]
     return embed_component(fallback, smiles, **kw)
 
 
+def uncached(rep: str, smiles: list[str], *, cache_dir: Path = CACHE_DIR) -> list[str]:
+    """The molecules `embed_component(rep, smiles)` would have to COMPUTE, after the
+    coverage fallback: [] for a rep that is never cached (morgan is computed on demand).
+    Lets a dry run say what to precompute instead of silently loading models."""
+    while uncovered_elements(rep, smiles) and REPS[rep].fallback:
+        rep = REPS[rep].fallback
+    if not REPS[rep].cached:
+        return []
+    vectors, failures = _read_cache(Path(cache_dir) / rep)
+    return [s for s in dict.fromkeys(smiles) if s not in vectors and s not in failures]
+
+
 # =============================================================================
 # 5. CLI  -- what the collaborator runs
 # =============================================================================

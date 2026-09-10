@@ -10,6 +10,7 @@ next to it, read-only, until module 7 lands.
 | `reduce.py` | pool + representation + reduction -> the float64 matrix the GP sees, with per-block metadata |
 | `lengthscale.py` | the chen and geom rules, the model space, the Gamma prior, and the preflight |
 | `bo.py` | one pool-BO campaign: the GP, analytic LogEI, the fitted-lengthscale record, the metrics |
+| `sweep.py` | the A/B matrix as a resumable, shardable task list, one CSV row per campaign |
 
 ```bash
 python -m lsab.datasets                     # one line per registered dataset
@@ -17,7 +18,7 @@ python -m lsab.featurize --status           # what is in the embedding cache
 python -m lsab.reduce --rep morgan --reduction decorr0.7   # D and its blocks, every dataset
 python -m lsab.lengthscale --rank           # the preflight: geometry and both prior centres per cell
 python -m lsab.bo --dataset bh_reaction_1 --rep morgan --rule geom --iter 20   # one campaign, eyeballed
-python -m unittest tests.test_datasets tests.test_featurize tests.test_reduce tests.test_lengthscale tests.test_bo -v
+python -m unittest tests.test_datasets tests.test_featurize tests.test_reduce tests.test_lengthscale tests.test_bo tests.test_sweep -v
 python tools/snapshot_pools.py              # (old tree, once) regenerate tests/old_pool_snapshot.json
 ```
 
@@ -92,6 +93,61 @@ largest 107), including conformer generation:
 conformer is seeded (42) and the models run in eval mode. On GPU the last bits
 can differ between runs. That is not worth fixing for a GP feature, but do not
 expect a GPU cache to match a CPU cache exactly.
+
+## Running the A/B
+
+**1. Embed first.** The sweep embeds any molecule it finds uncached, but two shards
+must never write the same representation's cache at once. So compute the
+embeddings before sharding, and let the dry run confirm nothing is missing:
+
+```bash
+python -m lsab.featurize --all-reps --all-datasets
+python -m lsab.sweep --out runs/ab_v1.csv --dry-run
+```
+
+The dry run writes nothing. Per cell it prints the tasks left, `d` and both prior
+centres, and a time estimate from the median seconds of rows already written for
+that cell. A cell with no rows yet prints `?` and is left out of the total. A cell
+whose molecules are not embedded yet says so and names the command to fix it.
+
+**2. Pilot.** 2 datasets x 2 reductions x 1 rep x 2 rules x 2 prior modes x 2 seeds
+= 32 campaigns:
+
+```bash
+python -m lsab.sweep --out runs/ab_v1.csv --datasets bh_reaction_1 shields --reps morgan --seeds 2
+python -m lsab.sweep --out runs/ab_v1.csv --datasets bh_reaction_1 shields --reps morgan --seeds 2 --status
+```
+
+**3. The full matrix, in eight shards.** Each shard writes its own
+`runs/ab_v1.shard<i>of8.csv`; rows already in any file of the run, the pilot's
+included, are not run again.
+
+```bash
+for i in $(seq 0 7); do python -m lsab.sweep --out runs/ab_v1.csv --shard $i/8 > runs/ab_v1.shard$i.log 2>&1 & done; wait
+python -m lsab.sweep --out runs/ab_v1.csv --status
+```
+
+**The default matrix** is `DEFAULT_DATASETS` (6) x morgan, mace_mp0, mace_off23,
+aimnet2_all, t5, chemberta (6) x decorr0.7, pca64 (2) x chen, geom (2) x
+match_concentration, match_parameterisation (2) x 10 seeds = 2,880 campaigns of 50
+experiments. The 10k-row pools and the `none` reduction are opt-in. The pilot's 32
+morgan campaigns took 7 minutes on one thread, a median of 13 s each (range 8 to
+24 s). At that rate the matrix is about 10 hours in one process, or under 2 hours on
+eight shards. Treat that as optimistic: the other pools are larger or
+higher-dimensional and are not timed yet. Once a cell has rows, the dry run's
+per-cell estimate replaces this guess.
+
+**Threads.** Each process uses one torch thread by default (`--threads 1`, printed
+at start). The GP never has more than 50 training points, so extra threads buy
+nothing inside one campaign: a bh_reaction_1 chen campaign took 41 s with torch's
+default 10 threads and 24 s with one. The parallelism is one shard per core;
+`--threads` is there for a single unsharded run.
+
+**Resuming.** Stop any time and rerun the same command: tasks whose key is in any
+file of the run are skipped. The key is (dataset, reduction, rep, rule, prior_mode,
+cv, seed, n_init, n_iter, seed_base). Every file must have exactly the header in
+`ROW_FIELDS`, or the run refuses before appending anything. A failed campaign is a
+row with `failed=True`, not a crash.
 
 ## The GP has no outputscale
 
