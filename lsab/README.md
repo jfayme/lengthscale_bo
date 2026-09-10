@@ -99,14 +99,19 @@ expect a GPU cache to match a CPU cache exactly.
 
 ## Running the A/B
 
-**1. Embed first.** The sweep embeds any molecule it finds uncached, but two shards
-must never write the same representation's cache at once. So compute the
-embeddings before sharding, and let the dry run confirm nothing is missing:
+**1. Embed first.** The sweep never embeds. Two shards writing one
+representation's cache at once would overwrite each other's work, so a run that
+finds a molecule missing from the cache prints what is missing and the
+`python -m lsab.featurize` command that fills it, then exits with code 2 before its
+first task. Compute the embeddings in one process, then let the dry run confirm:
 
 ```bash
 python -m lsab.featurize --all-reps --all-datasets
 python -m lsab.sweep --out runs/ab_v1.csv --dry-run
 ```
+
+`--allow-embedding` lets a single unsharded run embed as it goes, on a machine with
+the model stacks; it is refused together with `--shard`.
 
 The dry run writes nothing. Per cell it prints the tasks left, `d` and both prior
 centres, and a time estimate from the median seconds of rows already written for
@@ -126,9 +131,17 @@ python -m lsab.sweep --out runs/ab_v1.csv --datasets bh_reaction_1 shields --rep
 included, are not run again.
 
 ```bash
-for i in $(seq 0 7); do python -m lsab.sweep --out runs/ab_v1.csv --shard $i/8 > runs/ab_v1.shard$i.log 2>&1 & done; wait
+for i in $(seq 0 7); do OMP_NUM_THREADS=1 python -m lsab.sweep --out runs/ab_v1.csv --shard $i/8 > runs/ab_v1.shard$i.log 2>&1 & done; wait
 python -m lsab.sweep --out runs/ab_v1.csv --status
 ```
+
+**Threads: one per shard.** A bh_reaction_1 chen campaign took 41 s with torch's
+default 10 threads and 24 s with one: the GP never has more than 50 training
+points, so extra threads only add overhead, and the parallelism is one shard per
+core. `--threads` (default 1) sets torch's threads and, before numpy loads,
+`OMP_NUM_THREADS`, `MKL_NUM_THREADS` and `OPENBLAS_NUM_THREADS` for the BLAS behind
+every cell build. The loop sets `OMP_NUM_THREADS=1` itself as well, so it holds
+whatever imports first. Both counts are printed at start and written to every row.
 
 **The default matrix** is `DEFAULT_DATASETS` (6) x morgan, mace_mp0, mace_off23,
 aimnet2_all, t5, chemberta (6) x decorr0.7, pca64 (2) x chen, geom (2) x
@@ -140,17 +153,14 @@ eight shards. Treat that as optimistic: the other pools are larger or
 higher-dimensional and are not timed yet. Once a cell has rows, the dry run's
 per-cell estimate replaces this guess.
 
-**Threads.** Each process uses one torch thread by default (`--threads 1`, printed
-at start). The GP never has more than 50 training points, so extra threads buy
-nothing inside one campaign: a bh_reaction_1 chen campaign took 41 s with torch's
-default 10 threads and 24 s with one. The parallelism is one shard per core;
-`--threads` is there for a single unsharded run.
-
-**Resuming.** Stop any time and rerun the same command: tasks whose key is in any
-file of the run are skipped. The key is (dataset, reduction, rep, rule, prior_mode,
-cv, seed, n_init, n_iter, seed_base). Every file must have exactly the header in
-`ROW_FIELDS`, or the run refuses before appending anything. A failed campaign is a
-row with `failed=True`, not a crash.
+**Resuming and failures.** Stop any time and rerun the same command: tasks whose
+key is in any file of the run are skipped. The key is (dataset, reduction, rep,
+rule, prior_mode, cv, seed, n_init, n_iter, seed_base). Every file must have exactly
+the header in `ROW_FIELDS`, or the run refuses before appending anything. A failed
+campaign is a row with `failed=True`, not a crash. A cell that cannot be built, say
+one component over the 1% embedding-failure limit, prints `SKIP <cell>: <error>`
+and the shard carries on; no row is written for it, and the shard exits with code 1
+at the end, listing every skipped cell.
 
 ## The GP has no outputscale
 

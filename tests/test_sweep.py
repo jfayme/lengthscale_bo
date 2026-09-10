@@ -15,6 +15,8 @@ import contextlib
 import csv
 import dataclasses
 import io
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -142,6 +144,46 @@ class TestSweep(unittest.TestCase):
             self.assertEqual(chen[field], geom[field], field)
         self.assertNotEqual(chen["ell_0"], geom["ell_0"])
         self.assertEqual((chen["failed"], geom["failed"]), ("False", "False"))
+
+    def test_sweep_refuses_to_embed(self):
+        one_miss = lambda rep, smiles, **kw: ["C1=CC=CC=C1"]   # noqa: E731
+        with mock.patch.object(featurize, "uncached", one_miss):
+            with self.assertRaises(SystemExit) as raised:
+                _, printed = self._sweep(_tasks())
+            self.assertEqual(raised.exception.code, 2)
+            self.assertFalse(self.out.exists())
+            self.assertEqual(self._sweep(_tasks(), allow_embedding=True)[0], 2)   # one unsharded process may
+        args = ["--out", str(self.out), "--datasets", "bh_reaction_1", "--reps", "morgan",
+                "--shard", "0/2", "--allow-embedding"]
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
+            S.main(args)                                               # a shard may never write the cache
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_unbuildable_cell_is_skipped(self):
+        real_build = S.build
+
+        def build_fails_without_reduction(pool, rep, reduction, **kw):
+            if reduction == "none":
+                raise ValueError("synthetic: 3 of 22 molecules failed to embed")
+            return real_build(pool, rep, reduction, **kw)
+
+        tasks = S.task_list(["bh_reaction_1"], ["none", "decorr0.7"], ["fake"], ["chen", "geom"],
+                            ["match_concentration"], 0.3, 1, 0)
+        with mock.patch.object(S, "build", build_fails_without_reduction):
+            with contextlib.redirect_stdout(io.StringIO()) as printed, self.assertRaises(SystemExit) as raised:
+                S.sweep(tasks, self.out, **DESIGN)
+        self.assertEqual(raised.exception.code, 1)
+        self.assertIn("SKIP bh_reaction_1/none/fake", printed.getvalue())
+        with open(self.out, newline="", encoding="utf-8") as handle:
+            self.assertEqual({r["reduction"] for r in csv.DictReader(handle)}, {"decorr0.7"})   # the rest ran
+
+    def test_threads_reach_blas(self):
+        env = {k: v for k, v in os.environ.items() if k not in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS")}
+        run = subprocess.run([sys.executable, "-m", "lsab.sweep", "--out", str(self.tmp / "t.csv"),
+                              "--datasets", "bh_reaction_1", "--reps", "morgan", "--reductions", "none",
+                              "--seeds", "1", "--dry-run", "--threads", "2"],     # 2, not the default: argv was read
+                             cwd=ROOT, env=env, capture_output=True, text=True, check=True)
+        self.assertIn("threads: torch 2, OMP_NUM_THREADS=2", run.stdout)
 
     def test_dry_run_writes_nothing(self):
         written, printed = self._sweep(_tasks(seeds=2), dry_run=True)
