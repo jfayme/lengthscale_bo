@@ -3,3 +3,5 @@ embeddings/
 # the old tree's embedding cache: large and regenerable
 gollum_out/
 __pycache__/
+# sweep outputs (python -m lsab.sweep): results and logs, shared outside git
+runs/
