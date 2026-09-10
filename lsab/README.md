@@ -36,7 +36,8 @@ None has a SMILES per variable, so none can be a molecular pool.
 
 **Environment.** The `aimnet-bo` conda env is the reference: torch 2.12 (CPU),
 mace-torch 0.3.16, aimnet (aimnetcentral), transformers 4.57, ase 3.28,
-rdkit 2025.09. `morgan` needs only rdkit; each other representation needs only
+rdkit 2025.09, and pandas 2.1 or newer, which `lsab.datasets` needs for
+`DataFrame.map`. `morgan` needs only rdkit; each other representation needs only
 its own stack, because `lsab.featurize` imports a stack when that representation
 is first used.
 
@@ -61,7 +62,9 @@ python -m lsab.featurize --retry-failures --rep t5 --dataset shields
 ```
 
 It prints one line per (rep, dataset, component) and lists failed molecules at
-the end. A component containing an element the rep cannot embed (the Shields
+the end. `--retry-failures` forgets the recorded failures of each named rep and of
+its fallback chain, so `--retry-failures --rep mace_off23` also retries the Cs/K
+bases that `mace_off23` hands to `mace_mp0`. A component containing an element the rep cannot embed (the Shields
 Cs/K bases under `mace_off23` or `aimnet2`) is embedded whole with the rep's
 fallback, `mace_mp0`, and says so.
 

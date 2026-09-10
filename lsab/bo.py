@@ -110,7 +110,11 @@ def score_logei(gp: SingleTaskGP, candidate_x: torch.Tensor, best_f: float) -> t
 # 2. THE LOOP
 # =============================================================================
 def run_campaign(c: Campaign) -> CampaignResult:
-    """n_init random experiments, then one GP fit + LogEI argmax per experiment."""
+    """n_init random experiments, then one GP fit + LogEI argmax per experiment.
+
+    Every iteration builds a FRESH GP whose ARD lengthscales start at prior.ell_0, so
+    each fit is warm-started from the prior centre, not from the previous fit. That is
+    intended: it is what makes the centre matter at every step, not only the first."""
     start = time.perf_counter()
     X = torch.tensor(c.fp.X, dtype=F64)
     y = torch.tensor(c.fp.pool.objective, dtype=F64)

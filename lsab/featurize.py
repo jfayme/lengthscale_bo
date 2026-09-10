@@ -130,9 +130,13 @@ def _read_cache(folder: Path) -> tuple[dict[str, np.ndarray], dict[str, str]]:
 def _write_atomic(path: Path, write: Callable) -> None:
     """Write `path.tmp`, then os.replace it: an interrupted write never leaves a torn file."""
     tmp = path.with_name(path.name + ".tmp")
-    with open(tmp, "wb") as handle:
-        write(handle)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "wb") as handle:
+            write(handle)
+        os.replace(tmp, path)
+    except BaseException:   # a failed or interrupted write leaves neither a torn file nor a .tmp
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _write_cache(folder: Path, vectors: dict[str, np.ndarray], failures: dict[str, str]) -> None:
@@ -169,14 +173,19 @@ def embed(rep: str, smiles: list[str], *, device: str = "cpu",
     misses = [s for s in dict.fromkeys(smiles) if s not in vectors and s not in failures]
     if misses:
         featurizer = _featurizer(spec, device)
+        width = len(next(iter(vectors.values()))) if vectors else None
         for count, s in enumerate(misses, 1):
             try:
                 vector = np.asarray(featurizer([s]), dtype=np.float32)[0]
                 if not np.isfinite(vector).all():
                     raise ValueError("non-finite embedding")
-                vectors[s] = vector
             except Exception as error:   # KeyboardInterrupt is not an Exception: it stops the run
                 failures[s] = f"{type(error).__name__}: {error}"[:200]
+            else:
+                if width is not None and len(vector) != width:   # a run-stopper, never a recorded failure
+                    raise RuntimeError(f"{folder}: the cache holds {width}-d vectors but {rep} now gives "
+                                       f"{len(vector)}-d ones; the registry entry changed, delete that directory")
+                vectors[s], width = vector, len(vector)
             if spec.cached and count % FLUSH_EVERY == 0:
                 _write_cache(folder, vectors, failures)
         if spec.cached:
@@ -222,6 +231,14 @@ def uncached(rep: str, smiles: list[str], *, cache_dir: Path = CACHE_DIR) -> lis
     return [s for s in dict.fromkeys(smiles) if s not in vectors and s not in failures]
 
 
+def forget_failures(rep: str, cache_dir: Path = CACHE_DIR) -> None:
+    """--retry-failures: clear the recorded failures of `rep` AND of its fallback chain,
+    since a component that falls back is embedded, and fails, under the fallback."""
+    while rep is not None:
+        (Path(cache_dir) / rep / "failures.json").unlink(missing_ok=True)
+        rep = REPS[rep].fallback
+
+
 # =============================================================================
 # 5. CLI  -- what the collaborator runs
 # =============================================================================
@@ -258,7 +275,7 @@ def main(argv: list[str] | None = None) -> None:
         parser.error("give --rep or --all-reps, and --dataset or --all-datasets (or --status)")
     if args.retry_failures:
         for rep in reps:
-            (args.cache_dir / rep / "failures.json").unlink(missing_ok=True)
+            forget_failures(rep, args.cache_dir)
 
     pools = {name: datasets.load(name) for name in names}
     failed = []

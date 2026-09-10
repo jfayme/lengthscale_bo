@@ -119,6 +119,46 @@ class TestFeaturize(unittest.TestCase):
                 self.assertEqual(saved["X"].shape, (100, 3))
             self.assertEqual(list(Path(tmp).rglob("*.tmp")), [])
 
+    def test_width_change_stops_the_run(self):
+        narrow, _ = _fake_rep()
+        wide = RepSpec("fake", lambda device: (lambda smiles: np.ones((len(smiles), 4), np.float32)),
+                       None, None, cached=True)
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(REPS, {"fake": narrow}):
+            embed("fake", ["CC", "BAD"], cache_dir=tmp)              # a 3-d cache, and one failure
+            failures = (Path(tmp) / "fake" / "failures.json").read_bytes()
+            with mock.patch.dict(REPS, {"fake": wide}), self.assertRaises(RuntimeError) as raised:
+                embed("fake", ["CCO"], cache_dir=tmp)                # a 4-d featurizer, same directory
+            self.assertIn(str(Path(tmp) / "fake"), str(raised.exception))
+            self.assertEqual((Path(tmp) / "fake" / "failures.json").read_bytes(), failures)
+            self.assertEqual(list(Path(tmp).rglob("*.tmp")), [])
+
+    def test_atomic_write_leaves_no_tmp(self):
+        spec, _ = _fake_rep()
+        real_savez, calls = np.savez, []
+
+        def savez_fails_the_second_time(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            return real_savez(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(REPS, {"fake": spec}):
+            with mock.patch("numpy.savez", savez_fails_the_second_time), self.assertRaises(OSError):
+                embed("fake", ["C" * n for n in range(1, 151)], cache_dir=tmp)   # flushes at 100 and at the end
+            self.assertEqual(list(Path(tmp).rglob("*.tmp")), [])
+            with np.load(Path(tmp) / "fake" / "vectors.npz") as saved:          # the 100-molecule flush survives
+                self.assertEqual(len(saved["smiles"]), 100)
+
+    def test_retry_failures_walks_the_fallback_chain(self):
+        from lsab.featurize import forget_failures
+        with tempfile.TemporaryDirectory() as tmp:
+            for rep in ("mace_off23", "mace_mp0", "t5"):
+                (Path(tmp) / rep).mkdir()
+                (Path(tmp) / rep / "failures.json").write_text("{}")
+            forget_failures("mace_off23", tmp)
+            left = sorted(p.parent.name for p in Path(tmp).rglob("failures.json"))
+            self.assertEqual(left, ["t5"])                           # mace_off23 and its fallback mace_mp0 cleared
+
     def test_coverage(self):
         self.assertEqual(uncovered_elements("mace_off23", ["[Cs+].[O-]C(=O)C"]), {55})
         self.assertEqual(uncovered_elements("t5", ["[Cs+].[O-]C(=O)C"]), set())
