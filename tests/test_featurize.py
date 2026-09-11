@@ -149,6 +149,27 @@ class TestFeaturize(unittest.TestCase):
             with np.load(Path(tmp) / "fake" / "vectors.npz") as saved:          # the 100-molecule flush survives
                 self.assertEqual(len(saved["smiles"]), 100)
 
+    def test_replace_survives_a_transient_lock(self):
+        spec, _ = _fake_rep()
+        real_replace, calls = os.replace, []
+
+        def locked_twice(src, dst):                 # what a reader holding the file open does on Windows
+            calls.append(dst)
+            if len(calls) <= 2:
+                raise PermissionError(13, "Access is denied", str(dst))
+            return real_replace(src, dst)
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(REPS, {"fake": spec}):
+            with mock.patch("lsab.featurize.time.sleep"), mock.patch("lsab.featurize.os.replace", locked_twice):
+                embed("fake", ["CC", "CCO"], cache_dir=tmp)
+            self.assertEqual(json.loads((Path(tmp) / "fake" / "failures.json").read_text()), {})
+            self.assertEqual(list(Path(tmp).rglob("*.tmp")), [])
+            with mock.patch("lsab.featurize.time.sleep"), mock.patch("lsab.featurize.os.replace",
+                                                                     side_effect=PermissionError(13, "locked")):
+                with self.assertRaises(PermissionError):      # a lock that never clears still fails loudly
+                    embed("fake", ["CCCC"], cache_dir=tmp)
+            self.assertEqual(list(Path(tmp).rglob("*.tmp")), [])
+
     def test_retry_failures_walks_the_fallback_chain(self):
         from lsab.featurize import forget_failures
         with tempfile.TemporaryDirectory() as tmp:

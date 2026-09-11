@@ -127,13 +127,28 @@ def _read_cache(folder: Path) -> tuple[dict[str, np.ndarray], dict[str, str]]:
     return vectors, failures
 
 
+REPLACE_RETRIES = 6   # os.replace attempts, 0.25 s apart and growing, before a sharing violation is fatal
+
+
 def _write_atomic(path: Path, write: Callable) -> None:
-    """Write `path.tmp`, then os.replace it: an interrupted write never leaves a torn file."""
+    """Write `path.tmp`, then os.replace it: an interrupted write never leaves a torn file.
+
+    On Windows, replacing a file that another process holds open (a reader, an
+    antivirus scan, the search indexer) fails with PermissionError. Such locks last
+    milliseconds, so the replace is retried for a few seconds before giving up.
+    """
     tmp = path.with_name(path.name + ".tmp")
     try:
         with open(tmp, "wb") as handle:
             write(handle)
-        os.replace(tmp, path)
+        for attempt in range(1, REPLACE_RETRIES + 1):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == REPLACE_RETRIES:
+                    raise
+                time.sleep(0.25 * attempt)
     except BaseException:   # a failed or interrupted write leaves neither a torn file nor a .tmp
         tmp.unlink(missing_ok=True)
         raise
