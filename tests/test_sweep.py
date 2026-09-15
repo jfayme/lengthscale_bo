@@ -94,6 +94,25 @@ class TestSweep(unittest.TestCase):
             written = S.sweep(tasks, self.out, **DESIGN, **kw)
         return written, printed.getvalue()
 
+    def test_random_auc_computed_once_per_dataset(self):
+        """400 random campaigns per dataset, not per task: the baseline ignores the
+        rep, the reduction, the arm and the seed, and the sweep must too."""
+        S._RANDOM_AUC.clear()
+        self.addCleanup(S._RANDOM_AUC.clear)
+        calls = []
+        real = S.random_auc
+
+        def counted(objective, n_iter, **kw):
+            calls.append(n_iter)
+            return real(objective, n_iter, **kw)
+
+        with mock.patch.object(S, "random_auc", counted):
+            written, _ = self._sweep(_tasks(seeds=3, modes=("match_concentration",
+                                                            "match_parameterisation")))
+        self.assertEqual(written, 12)                 # 3 seeds x 2 rules x 2 prior modes
+        self.assertEqual(calls, [DESIGN["n_iter"]])   # one dataset, one budget, one call
+        self.assertEqual(list(S._RANDOM_AUC), [("bh_reaction_1", DESIGN["n_iter"], DESIGN["seed_base"])])
+
     def test_resume_by_key(self):
         four = _tasks(modes=("match_concentration", "match_parameterisation"))
         self.assertEqual(self._sweep(four[:3])[0], 3)
@@ -124,6 +143,14 @@ class TestSweep(unittest.TestCase):
         self.assertIn("synthetic fit failure", rows["geom"]["error"])
         self.assertEqual(rows["chen"]["failed"], "False")
         self.assertTrue(float(rows["chen"]["auc"]) >= 0)
+        # lift is an outcome and dies with the campaign; auc_random is a property of the
+        # pool, known either way, so the analysis can still see what the arm was up against
+        self.assertEqual(rows["geom"]["lift"], "")
+        self.assertTrue(0.0 < float(rows["geom"]["auc_random"]) < 1.0)
+        self.assertEqual(rows["chen"]["auc_random"], rows["geom"]["auc_random"])
+        chen_lift = (float(rows["chen"]["auc"]) - float(rows["chen"]["auc_random"]))
+        self.assertAlmostEqual(float(rows["chen"]["lift"]),
+                               chen_lift / (1.0 - float(rows["chen"]["auc_random"])), places=9)
 
     def test_degenerate_skipped(self):
         degenerate = lambda fp: dataclasses.replace(pool_geometry(fp), degenerate=True)  # noqa: E731
@@ -140,7 +167,7 @@ class TestSweep(unittest.TestCase):
             self._sweep(_tasks())
         with open(self.out, newline="", encoding="utf-8") as handle:
             chen, geom = sorted(csv.DictReader(handle), key=lambda r: r["rule"])
-        for field in ("init_indices", "n", "d", "D_bar", "used_reps"):
+        for field in ("init_indices", "n", "d", "D_bar", "used_reps", "auc_random"):
             self.assertEqual(chen[field], geom[field], field)
         self.assertNotEqual(chen["ell_0"], geom["ell_0"])
         self.assertEqual((chen["failed"], geom["failed"]), ("False", "False"))

@@ -162,6 +162,31 @@ one component over the 1% embedding-failure limit, prints `SKIP <cell>: <error>`
 and the shard carries on; no row is written for it, and the shard exits with code 1
 at the end, listing every skipped cell.
 
+## Lift, not raw AUC
+
+The headline metric is `lift`, not `auc`:
+
+```
+lift = (auc - auc_random) / (1 - auc_random)
+```
+
+`auc_random` is `bo.random_auc`: the mean final AUC of 400 random-selection campaigns
+of the same budget on the same pool, drawn from `default_rng(seed_base + 90210)`. It is
+0 on the lift scale and a campaign that finds the pool's best candidate first is 1.
+
+Raw AUC is dominated by how easy a dataset is. That is held fixed inside a pair — both
+arms see the same pool — but not across the matrix, so an average of raw AUC over
+datasets mostly measures which datasets are in it. Raw `auc` stays in the CSV.
+
+`auc_random` depends on the objective and `n_iter` ALONE: not on the representation, the
+reduction, the rule, the prior mode or the seed. So one value serves every row of a
+dataset, the sweep computes it once per dataset, and it is written to every row as a
+cell field — which means it is present even on a `failed=True` row, where `lift` is
+empty along with the rest of the outcome.
+
+`python -m lsab.bo` prints it too. `bo.metrics` takes `auc_random` as a keyword and
+leaves `lift` NaN without it, so no caller pays for 400 campaigns by accident.
+
 ## The GP has no outputscale
 
 The kernel is a bare Matern-5/2 with one lengthscale per dimension, not wrapped in

@@ -169,8 +169,49 @@ def trajectory(sampled_objective, pool_objective) -> tuple[np.ndarray, np.ndarra
     return running_auc, running_coverage
 
 
-def metrics(result: CampaignResult, pool_objective: np.ndarray, n_init: int) -> dict:
-    """The flat, CSV-safe outcome of one campaign."""
+RANDOM_AUC_DRAWS = 400     # random campaigns behind auc_random; the count the old sweep used
+RANDOM_AUC_OFFSET = 90210  # added to seed_base, so the baseline draws a stream no campaign uses
+
+
+def random_auc(pool_objective, n_iter: int, *, n_draws: int = RANDOM_AUC_DRAWS,
+               seed_base: int = 1337) -> float:
+    """Mean final AUC of `n_draws` random-selection campaigns of `n_iter` experiments on
+    this pool: the zero of the lift scale.
+
+    It depends on the objective and the budget ALONE -- not on the representation, the
+    reduction, the rule, the prior or the seed -- so one value serves every cell and arm
+    of a dataset, and module 6 computes it once per dataset. Same estimator as the old
+    `lengthscale_ab.Cell._random_auc`, down to the draw count and the seed offset.
+    """
+    pool = np.asarray(pool_objective, dtype=float)
+    rng = np.random.default_rng(seed_base + RANDOM_AUC_OFFSET)
+    budget = min(int(n_iter), len(pool))     # a pool shorter than the budget cannot fill it
+    return float(np.mean([trajectory(pool[rng.choice(len(pool), budget, replace=False)], pool)[0][-1]
+                          for _ in range(n_draws)]))
+
+
+def lift(auc, auc_random) -> float:
+    """`auc` rescaled so this pool's random baseline is 0 and a perfect campaign is 1.
+
+    THE HEADLINE METRIC of the A/B: raw AUC is dominated by how easy a dataset is, which
+    is held fixed inside a pair but not across the matrix. NaN when `auc_random` is None
+    (it was not computed) or 1 (no headroom above random).
+    """
+    if auc_random is None:
+        return float("nan")
+    headroom = 1.0 - float(auc_random)
+    return float((float(auc) - float(auc_random)) / headroom) if headroom > 0 else float("nan")
+
+
+def metrics(result: CampaignResult, pool_objective: np.ndarray, n_init: int,
+            *, auc_random: float | None = None) -> dict:
+    """The flat, CSV-safe outcome of one campaign.
+
+    `auc_random` is this pool's random-selection baseline from `random_auc`; it is what
+    turns `auc` into `lift`. Module 6 passes the value it memoised for the dataset.
+    Omitted, `lift` is NaN: the baseline costs 400 campaigns, too much to compute behind
+    the caller's back once per campaign.
+    """
     if len(result.fitted_ell_mean) != len(result.sampled_objective) - n_init:
         raise ValueError(f"n_init={n_init} does not match this result's fit record")
     pool = np.asarray(pool_objective, dtype=float)
@@ -180,6 +221,7 @@ def metrics(result: CampaignResult, pool_objective: np.ndarray, n_init: int) -> 
     ell, log_sd = (result.fitted_ell_mean, result.fitted_ell_log_sd) if n_init < len(sampled) else ([np.nan],) * 2
     return {
         "auc": float(running_auc[-1]),
+        "lift": lift(running_auc[-1], auc_random),
         "coverage_top5": float(running_coverage[-1]),
         "simple_regret": float((pool.max() - sampled.max()) / (pool.max() - pool.min())),
         "best_found": float(sampled.max()),
@@ -219,7 +261,8 @@ def main(argv: list[str] | None = None) -> None:
     prior = make_prior(fp, args.rule, args.prior_mode, args.cv)
     result = run_campaign(Campaign(fp, prior, n_init=args.init, n_iter=args.iter, seed=args.seed))
     print(prior.describe())
-    print(metrics(result, fp.pool.objective, args.init))
+    print(metrics(result, fp.pool.objective, args.init,
+                  auc_random=random_auc(fp.pool.objective, args.iter)))
     print(f"{'k':>4} {'index':>7} {'objective':>12} {'cum_best':>12} {'ell_fitted':>11}")
     for k, (index, value) in enumerate(zip(result.sampled_indices, result.sampled_objective), 1):
         ell = result.fitted_ell_mean[k - 1 - args.init] if k > args.init else float("nan")

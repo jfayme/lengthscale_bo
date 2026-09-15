@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from lsab import bo, datasets, featurize  # noqa: E402
 from lsab.bo import (Campaign, CampaignError, CampaignResult, build_gp, initial_design,  # noqa: E402
-                     metrics, run_campaign, trajectory)
+                     lift, metrics, random_auc, run_campaign, trajectory)
 from lsab.datasets import DatasetSpec, Pool  # noqa: E402
 from lsab.lengthscale import make_prior, pool_bounds  # noqa: E402
 from lsab.reduce import FeaturePool, build  # noqa: E402
@@ -90,6 +90,35 @@ class TestPieces(unittest.TestCase):
         two_top = np.array([0.0] * 38 + [9.0, 10.0])                     # 40 values: top 5% = {9, 10}
         np.testing.assert_array_equal(trajectory([9.0, 0.0, 10.0, 9.0], two_top)[1], [0.5, 0.5, 1.0, 1.0])
 
+    def test_lift_scale(self):
+        """lift puts the random baseline at 0 and a perfect campaign at 1."""
+        self.assertAlmostEqual(lift(0.4, 0.4), 0.0)                       # exactly the baseline
+        self.assertAlmostEqual(lift(1.0, 0.4), 1.0)                       # the pool's best, first pick
+        self.assertAlmostEqual(lift(0.7, 0.4), 0.5)
+        self.assertLess(lift(0.2, 0.4), 0.0)                              # worse than random is negative
+        self.assertTrue(np.isnan(lift(0.9, None)))                        # not computed
+        self.assertTrue(np.isnan(lift(1.0, 1.0)))                         # no headroom
+        self.assertTrue(np.isnan(lift(float("nan"), 0.4)))                # a failed campaign
+
+    def test_random_auc(self):
+        pool = np.arange(200.0)
+        first = random_auc(pool, 20, n_draws=50)
+        self.assertEqual(first, random_auc(pool, 20, n_draws=50))          # its own seed, no global RNG
+        self.assertNotEqual(first, random_auc(pool, 20, n_draws=50, seed_base=7))
+        self.assertLess(first, random_auc(pool, 60, n_draws=50))           # a bigger budget does better
+        self.assertTrue(0.0 < first < 1.0)
+        # budget clamped to the pool: 20 draws from 20 candidates is the whole pool every time
+        whole = random_auc(np.arange(20.0), 50, n_draws=5)
+        self.assertAlmostEqual(whole, random_auc(np.arange(20.0), 20, n_draws=5))
+        # a maximise pool and its shifted/scaled twin are the same problem
+        self.assertAlmostEqual(first, random_auc(3.0 * pool + 11.0, 20, n_draws=50))
+
+    def test_metrics_lift_is_optional(self):
+        pool = np.arange(100.0)
+        self.assertTrue(np.isnan(metrics(_result([10.0, 99.0]), pool, n_init=1)["lift"]))
+        found = metrics(_result([10.0, 99.0]), pool, n_init=1, auc_random=0.5)
+        self.assertAlmostEqual(found["lift"], (found["auc"] - 0.5) / 0.5)
+
 
 def _result(sampled, n_init=1):
     sampled = np.asarray(sampled, dtype=float)
@@ -115,13 +144,23 @@ class TestCampaigns(unittest.TestCase):
 
     def test_beats_random(self):
         pool = self.fp.pool.objective
-        bo_auc, random_auc = [], []
+        baseline = random_auc(pool, 20)
+        bo_aucs, drawn_aucs, lifts = [], [], []
         for seed in range(10):
             result = run_campaign(Campaign(self.fp, self.geom, n_iter=20, seed=seed))
-            bo_auc.append(metrics(result, pool, n_init=5)["auc"])
+            found = metrics(result, pool, n_init=5, auc_random=baseline)
+            bo_aucs.append(found["auc"])
+            lifts.append(found["lift"])
             draws = np.random.default_rng(1337 + seed).choice(len(pool), 20, replace=False)
-            random_auc.append(trajectory(pool[draws], pool)[0][-1])
-        self.assertGreater(np.mean(bo_auc), np.mean(random_auc) + 0.05, (np.mean(bo_auc), np.mean(random_auc)))
+            drawn_aucs.append(trajectory(pool[draws], pool)[0][-1])
+        self.assertGreater(np.mean(bo_aucs), np.mean(drawn_aucs) + 0.05, (np.mean(bo_aucs), np.mean(drawn_aucs)))
+        # The 400-draw baseline and the 10 hand-drawn campaigns estimate the same
+        # quantity, so they agree to within the 10 draws' own standard error (the
+        # tolerance is measured here, not guessed). Lift then says what the raw
+        # comparison above says, on the scale where random is 0.
+        standard_error = np.std(drawn_aucs) / np.sqrt(len(drawn_aucs))
+        self.assertAlmostEqual(baseline, np.mean(drawn_aucs), delta=4 * standard_error + 0.02)
+        self.assertGreater(np.mean(lifts), 0.0)
 
     def test_fit_record(self):
         recorded = run_campaign(Campaign(self.fp, self.geom, n_iter=9, seed=0))

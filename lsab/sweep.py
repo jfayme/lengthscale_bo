@@ -4,9 +4,9 @@ lsab/sweep.py
 
 Module 6 of the lengthscale-A/B rewrite: the A/B matrix as a flat task list that can
 be interrupted, resumed and split across processes, one CSV row per campaign. It
-schedules and records; it computes nothing. A cell is (dataset, reduction, rep), one
-FeaturePool and Geometry; an arm is (rule, prior_mode, cv), one Prior; a task is
-(seed, cell, arm), one campaign and one row.
+schedules and records; every number in a row is computed by modules 1-5. A cell is
+(dataset, reduction, rep), one FeaturePool and Geometry; an arm is (rule, prior_mode,
+cv), one Prior; a task is (seed, cell, arm), one campaign and one row.
 
 Seed-major order (for seed: for cell: for arm) leaves an interrupted run with every
 cell at seeds 0..k in every arm, so the paired analysis never sees an unpaired arm.
@@ -64,7 +64,7 @@ from pathlib import Path  # noqa: E402
 import torch  # noqa: E402
 
 from lsab import featurize  # noqa: E402
-from lsab.bo import Campaign, CampaignError, initial_design, metrics, run_campaign  # noqa: E402
+from lsab.bo import Campaign, CampaignError, initial_design, metrics, random_auc, run_campaign  # noqa: E402
 from lsab.datasets import DEFAULT_DATASETS, load  # noqa: E402
 from lsab.lengthscale import make_prior, pool_geometry, rule_chen, rule_geom  # noqa: E402
 from lsab.reduce import build  # noqa: E402
@@ -92,6 +92,11 @@ ROW_FIELDS = (
     "d",
     "used_reps",
     "n_failed_embed",
+    # auc_random: the pool's random-selection baseline, the zero of `lift`. A property of
+    # the objective and n_iter alone, so it is identical for every rep, reduction and arm
+    # of a dataset -- and it is known even when the campaign fails, so it is NOT an
+    # outcome field.
+    "auc_random",
     "D_bar",
     "geom_cv",
     "degenerate",
@@ -107,6 +112,7 @@ ROW_FIELDS = (
     # fit_gpytorch_mll, gpytorch NumericalWarnings for added jitter included, not only
     # optimisation failures: it is not a failure count.
     "auc",
+    "lift",
     "coverage_top5",
     "simple_regret",
     "best_found",
@@ -303,6 +309,21 @@ def build_cell(cell: CellKey, *, device: str = "cpu", cache_dir=None):
     return fp, pool_geometry(fp)
 
 
+_RANDOM_AUC: dict[tuple[str, int, int], float] = {}
+
+
+def cell_random_auc(pool, n_iter: int, seed_base: int) -> float:
+    """`bo.random_auc` for this pool, memoised on (dataset, n_iter, seed_base).
+
+    The baseline is 400 random campaigns and depends on the objective and the budget
+    only, so every rep, reduction, rule, prior mode and seed of a dataset shares one
+    value: six computations in the default matrix's 2,880 tasks, not 2,880."""
+    key = (pool.name, int(n_iter), int(seed_base))
+    if key not in _RANDOM_AUC:
+        _RANDOM_AUC[key] = random_auc(pool.objective, n_iter, seed_base=seed_base)
+    return _RANDOM_AUC[key]
+
+
 def run_task(
     task: Task,
     *,
@@ -322,6 +343,7 @@ def run_task(
     )
     prior = make_prior(fp, task.arm.rule, task.arm.prior_mode, task.arm.cv, geometry=g)
     components = [b for b in fp.blocks if b.kind == "component"]
+    baseline = cell_random_auc(fp.pool, n_iter, seed_base)
     row = dict(zip(KEY_FIELDS, row_key(task, n_init, n_iter, seed_base)))
     row.update(
         family=fp.pool.spec.family,
@@ -332,6 +354,7 @@ def run_task(
         d=fp.d,
         used_reps=";".join(f"{b.name}={b.used_rep}" for b in components),
         n_failed_embed=sum(b.n_failed for b in components),
+        auc_random=baseline,
         D_bar=g.mean,
         geom_cv=g.cv,
         degenerate=g.degenerate,
@@ -364,7 +387,7 @@ def run_task(
     else:
         design = result.sampled_indices[:n_init]
         row.update(
-            metrics(result, fp.pool.objective, n_init),
+            metrics(result, fp.pool.objective, n_init, auc_random=baseline),
             failed=False,
             fail_iteration=math.nan,
             error="",
@@ -450,7 +473,7 @@ def sweep(
         outcome = (
             f"FAILED@{row['fail_iteration']}"
             if row["failed"]
-            else f"auc={row['auc']:.3f}  {row['seconds']:.1f}s"
+            else f"auc={row['auc']:.3f} lift={row['lift']:+.3f}  {row['seconds']:.1f}s"
         )
         print(
             f"seed={task.seed:<3} {_label(task.cell):40s} {task.arm.rule:5s} {task.arm.prior_mode:23s} "
