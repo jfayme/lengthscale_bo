@@ -7,7 +7,8 @@ Acceptance tests for module 1, `lsab/datasets.py` (stdlib `unittest`, ~20 s):
     python -m unittest tests.test_datasets -v
 
 `test_matches_old_snapshot` compares against `tests/old_pool_snapshot.json`, written
-once from the OLD tree by `tools/snapshot_pools.py`. It is a sanity net for a loader
+once from the OLD tree (now deleted; `tools/snapshot_pools.py` is in git history, and
+the snapshot cannot be regenerated). It is a sanity net for a loader
 that silently drops rows or flips a sign, not a bit-identity gate. The other tests
 read the source files themselves, so the loader is never trusted to check itself.
 """

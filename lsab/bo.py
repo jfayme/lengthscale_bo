@@ -181,7 +181,8 @@ def random_auc(pool_objective, n_iter: int, *, n_draws: int = RANDOM_AUC_DRAWS,
     It depends on the objective and the budget ALONE -- not on the representation, the
     reduction, the rule, the prior or the seed -- so one value serves every cell and arm
     of a dataset, and module 6 computes it once per dataset. Same estimator as the old
-    `lengthscale_ab.Cell._random_auc`, down to the draw count and the seed offset.
+    tree's `lengthscale_ab.Cell._random_auc` (git history), down to the draw count and
+    the seed offset.
     """
     pool = np.asarray(pool_objective, dtype=float)
     rng = np.random.default_rng(seed_base + RANDOM_AUC_OFFSET)

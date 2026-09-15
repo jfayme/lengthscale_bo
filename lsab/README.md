@@ -19,8 +19,14 @@ python -m lsab.reduce --rep morgan --reduction decorr0.7   # D and its blocks, e
 python -m lsab.lengthscale --rank           # the preflight: geometry and both prior centres per cell
 python -m lsab.bo --dataset bh_reaction_1 --rep morgan --rule geom --iter 20   # one campaign, eyeballed
 python -m unittest tests.test_datasets tests.test_featurize tests.test_reduce tests.test_lengthscale tests.test_bo tests.test_sweep -v
-python tools/snapshot_pools.py              # (old tree, once) regenerate tests/old_pool_snapshot.json
 ```
+
+`tests/old_pool_snapshot.json` is the old tree's pools, recorded once before the
+rewrite: per dataset the row count, the objective's min/max/mean and the unique
+SMILES per component. `tests.test_datasets` checks this loader against it, so a
+dropped row or a flipped sign cannot pass silently. The old tree and the script that
+wrote it are gone (they are in git history); the snapshot is kept and is not
+regenerable.
 
 **The A/B is chen against geom.** chen centres the lengthscale prior at
 0.4*sqrt(d) + 4; geom centres it at the pool's mean pairwise distance divided by
@@ -40,6 +46,26 @@ rdkit 2025.09, and pandas 2.1 or newer, which `lsab.datasets` needs for
 `DataFrame.map`. `morgan` needs only rdkit; each other representation needs only
 its own stack, because `lsab.featurize` imports a stack when that representation
 is first used.
+
+Installed in dependency order, so the early modules need no torch:
+
+```
+numpy  scipy  pandas>=2.1  openpyxl  rdkit      # modules 1-4, and the whole test suite
+torch==2.12.0  botorch==0.18.0                  # module 5 (gpytorch 1.15.2 comes with botorch)
+transformers  sentencepiece                     # the t5 / chemberta representations
+mace-torch==0.3.16  aimnetcentral               # the 3-D representations (ase comes with mace)
+matplotlib                                      # module 7's figures
+```
+
+`openpyxl` is not an import anywhere — `pandas.read_excel` needs it for
+`shields_dataset.xlsx`, and two test modules load Shields, so the suite needs it.
+`sentencepiece` is likewise implicit: T5's tokenizer is the slow SentencePiece one.
+Pin `botorch==0.18.0` if you want the recorded `ell_fitted_*` to reproduce; version
+drift moves the marginal-likelihood fit in the last digits, and `pool_bounds` works
+around a 0.18 `Normalize` behaviour on zero-range columns. On an NVIDIA Blackwell
+card (RTX 50-series, `sm_120`) a CUDA torch build must be cu128 or newer, or it will
+not see the GPU at all — but see **Running the A/B**: the sweep is CPU-only by
+construction, so CPU torch is the sane default.
 
 **Weights.**
 

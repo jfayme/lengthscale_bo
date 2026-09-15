@@ -7,7 +7,11 @@ and how hard it pulls, resolved into plain numbers (`Prior`) for module 5. Pure
 numpy + scipy `pdist`: no torch, no module-level RNG, no state.
 
   chen : ell_0 = 0.4*sqrt(d) + 4, the published prior (Chen, Fleck & Stuyver, JCTC
-         2026; HSF-ChemBO-tutorial/base/kernels.py is the spec). Blind to the pool.
+         2026, DOI 10.1021/acs.jctc.6c00251). Blind to the pool. The reference
+         implementation was the tutorial's AdaptiveKernelFactory, which set
+         `GammaPrior(2*ell_0, 2.0)` and started the kernel at `ell_0` -- i.e. exactly
+         `gamma_parameters(ell_0, "match_parameterisation")` below. That file is no
+         longer in the repo; this docstring is the spec now.
   geom : ell_0 = D_bar / u*. D_bar is the pool's mean pairwise distance; u* maximises
          u*|k'(u)|, so the kernel varies most across the distances the pool holds.
          u* belongs to the KERNEL: change the kernel and USTAR must change with it.

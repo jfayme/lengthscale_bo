@@ -79,7 +79,7 @@ class Pool:
 
 
 # =============================================================================
-# 2. THE REGISTRY  (families ported verbatim from the old lengthscale_ab.FAMILY)
+# 2. THE REGISTRY  (families ported verbatim from the old tree's lengthscale_ab.FAMILY)
 # =============================================================================
 _BH_SUBSCREEN = ("ligand", "additive", "base", "aryl halide")
 
