@@ -1,0 +1,92 @@
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+# Consumed by logging_config.setup_logging, once, from the entry point.
+
+[logger]
+level = "INFO"              # lowest severity recorded
+path = "lengthscale_bo.log" # log file; empty disables the file handler
+console = true              # also write the records to stderr
+
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+[paths]
+data = "data" # dataset root the DatasetSpec paths resolve against
+
+
+# ---------------------------------------------------------------------------
+# Conformer search
+# ---------------------------------------------------------------------------
+# Consumed by ConformerGenerator in conformer.py. The groups below follow the
+# order of the pipeline.
+
+[conformer]
+
+# 1. Embedding with ETKDGv3.
+confs_per_rot_bond = 50    # conformers embedded per rotatable bond
+max_conformers = 500       # cap on the embedded conformer count
+seed = 0xF00D              # ETKDG seed, for reproducible embeddings
+small_ring_torsions = true # use the small-ring torsion potentials
+prune_rms_thresh = 0.5     # drop near-duplicate embeddings, Angstrom
+n_threads = 0              # RDKit threads; 0 uses every CPU core
+
+# 2. Force-field optimisation (MMFF94, or UFF where MMFF lacks parameters).
+max_iters = 2000 # force-field steps per conformer
+
+# 3. Pre-filtering and clustering: what the MLIP is asked to relax.
+mmff_window_kcal = 10.0   # window above the minimum, kcal/mol
+rmsd_cluster_thresh = 0.3 # Butina cut-off, heavy-atom RMSD, Angstrom
+max_automorphisms = 5000  # above this, cluster on the terminal-stripped core
+pre_filter_conf_max = 20  # cap on representatives sent to the MLIP
+
+# 4. MACE calculator, built lazily on first relaxation.
+model_paths = ""          # MACE weights; empty reuses cached mh-1
+device = "cuda"           # torch device the potential runs on
+head = "omol"             # MACE output head
+default_dtype = "float64" # precision the potential runs at
+enable_cueq = false       # cuEquivariance acceleration
+
+# 5. MLIP relaxation.
+fmax = 0.05     # BFGS force convergence, eV/Angstrom
+opt_steps = 500 # BFGS step budget per conformer
+log_every = 10  # log progress every N conformers
+
+# 6. Duplicate removal, and the ensemble handed back to the caller.
+# Every relaxation that was paid for is kept: at or above pre_filter_conf_max
+# max_final never truncates, and the featuriser decides what to do with them.
+dedup_energy_kcal = 0.1 # same-minimum energy gate, kcal/mol
+dedup_rmsd = 0.125      # same-minimum RMSD gate, Angstrom
+max_final = 20          # lowest-energy minima kept
+
+
+# ---------------------------------------------------------------------------
+# Featurisation
+# ---------------------------------------------------------------------------
+# Consumed by featuriser.aggregate, which collapses a per-conformer descriptor
+# matrix to the single vector a GP is given.
+#
+#   lowest         the lowest-energy conformer only; reproduces the original
+#                  single-conformer behaviour, and is discontinuous in
+#                  chemical space when near-identical molecules swap basins
+#   boltzmann      populations from the MLIP energies; continuous, but the
+#                  ensemble is a non-exhaustive sample, not a converged one
+#   ensemble_stats min, max, mean and std per descriptor; encodes
+#                  conformational spread but multiplies the width by four
+
+[featurizer]
+aggregation = "lowest" # one of: lowest, boltzmann, ensemble_stats
+temperature_k = 298.15 # Boltzmann temperature, Kelvin
+
+
+# ---------------------------------------------------------------------------
+# Morgan fingerprints
+# ---------------------------------------------------------------------------
+# Consumed by MorganFeaturizer in featuriser.py. Topological, so it has no
+# conformer axis and never goes through aggregate.
+
+[morgan]
+radius = 2    # bond radius of the environments; 2 gives ECFP4
+n_bits = 2048 # length of the folded bit vector
