@@ -39,7 +39,8 @@ max_iters = 2000 # force-field steps per conformer
 # 3. Pre-filtering and clustering: what the MLIP is asked to relax.
 mmff_window_kcal = 10.0   # window above the minimum, kcal/mol
 rmsd_cluster_thresh = 0.3 # Butina cut-off, heavy-atom RMSD, Angstrom
-pre_filter_conf_max = 8   # cap on representatives sent to the MLIP
+max_automorphisms = 5000  # above this, cluster on the terminal-stripped core
+pre_filter_conf_max = 20  # cap on representatives sent to the MLIP
 
 # 4. MACE calculator, built lazily on first relaxation.
 model_paths = ""          # MACE weights; empty reuses cached mh-1
@@ -58,7 +59,7 @@ log_every = 10  # log progress every N conformers
 # max_final never truncates, and the featuriser decides what to do with them.
 dedup_energy_kcal = 0.1 # same-minimum energy gate, kcal/mol
 dedup_rmsd = 0.125      # same-minimum RMSD gate, Angstrom
-max_final = 10          # lowest-energy minima kept
+max_final = 20          # lowest-energy minima kept
 
 
 # ---------------------------------------------------------------------------

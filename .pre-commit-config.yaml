@@ -1,12 +1,5 @@
-# tests/ targets the pre-rewrite `lsab` package and no longer imports; it is
-# kept only as a behavioural reference while the modules are rewritten by
-# hand, and will go once they are. Notebooks are exploratory scratch space.
-# Drop these two patterns as the new test suite lands.
-exclude: |
-  (?x)^(
-    tests/.*|
-    .*\.ipynb
-  )$
+# Notebooks are exploratory scratch space, not code the hooks should grade.
+exclude: '\.ipynb$'
 
 repos:
   - repo: https://github.com/econchick/interrogate

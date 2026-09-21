@@ -1,4 +1,4 @@
-"""Conformer ensembles from RDKit embedding and MLIP relaxation.
+"""Conformer ensembles from RDKit embedding and MLIP relaxation (MACE-MH1).
 
 Conformers are produced in four stages, each one cutting down the number of
 structures handed to the next:
@@ -12,11 +12,10 @@ structures handed to the next:
    interatomic potential (MLIP), followed by duplicate minima removal.
 
 Every tunable parameter is read from the `[conformer]` table of the settings
-file rather than hard-coded here; see the settings module.
+module.
 
-The ensemble this module returns holds every unique minimum the search found.
-Deciding which of them a descriptor is built from is a featurisation choice,
-so it belongs to the featuriser module, not here.
+The ensemble this module returns holds every unique minimum the search found,
+up to the number of MLIP relaxations the settings allow
 
 """
 
@@ -106,23 +105,19 @@ class ConformerEnsemble:
         Parameters
         ----------
         temperature
-            Temperature the populations are evaluated at, in Kelvin. It has
-            no default on purpose: the value is a featurisation choice, so
-            the caller supplies it rather than this module owning it.
+            Temperature at which the populations are evaluated (in K).
 
         Returns
         -------
         weights
-            Populations summing to one, shape (K,), in the same order as
-            the energies.
+            Populations summing to one, shape (K,), in the same order as the
+            energies.
 
         Notes
         -----
-        The energies are shifted by their minimum before exponentiating, so
-        the result is numerically stable for any offset. These are
-        populations over the conformers the *search happened to find*, not
-        over a converged ensemble: the sampling is not exhaustive, so treat
-        them as a smooth weighting rather than as thermodynamic populations.
+        The populations are taken over the conformers that the search
+        happened to find, which is not an exhaustive sample, and are
+        therefore a smooth weighting rather than a thermodynamic quantity.
 
         """
         exponent = -(self.energies - self.energies.min()) / (
@@ -136,7 +131,7 @@ class ConformerGenerator:
     """Conformer search combining RDKit embedding with MLIP relaxation.
 
     Calling an instance on a SMILES string runs the whole pipeline and
-    returns the surviving minima as a ConformerEnsemble.
+    returns the selected minima as a ConformerEnsemble dataclass.
 
     Parameters
     ----------
@@ -147,8 +142,7 @@ class ConformerGenerator:
         Upper bound on the number of embedded conformers, whatever the
         flexibility of the molecule.
     seed
-        Random seed handed to ETKDG, so that a repeated run embeds the same
-        starting structures.
+        Random seed handed to ETKDG.
     small_ring_torsions
         If True, ETKDG uses the torsion potentials fitted for small rings.
     prune_rms_thresh
@@ -164,9 +158,12 @@ class ConformerGenerator:
     rmsd_cluster_thresh
         Butina cut-off (in Angstrom) on the heavy-atom RMSD, deciding which
         conformers count as the same shape.
+    max_automorphisms
+        Number of symmetry-equivalent atom mappings above which the
+        clustering RMSD is measured on the molecule with stripped
+        terminal atoms.
     pre_filter_conf_max
-        Cap on the number of cluster representatives relaxed with the MLIP,
-        which is the expensive stage of the search.
+        Cap on the number of cluster representatives to be relaxed with MLIP.
     model_paths
         Path to the MACE weights to load. If None, cached mh-1 weights are
         reused, and downloaded first if the cache does not hold them.
@@ -196,11 +193,7 @@ class ConformerGenerator:
 
     Notes
     -----
-    Every default is read from the `[conformer]` table of the settings file,
-    so a run can be retuned without touching the code. The MACE calculator is
-    built lazily, on first use of the calculator property, and then cached on
-    the instance: constructing a generator is cheap and loads nothing onto
-    the device.
+    Every default is read from the `[conformer]` table of the settings file.
 
     """
 
@@ -215,6 +208,7 @@ class ConformerGenerator:
         max_iters: int = CONFORMER_SETTINGS["max_iters"],
         mmff_window_kcal: float = CONFORMER_SETTINGS["mmff_window_kcal"],
         rmsd_cluster_thresh: float = CONFORMER_SETTINGS["rmsd_cluster_thresh"],
+        max_automorphisms: int = CONFORMER_SETTINGS["max_automorphisms"],
         pre_filter_conf_max: int = CONFORMER_SETTINGS["pre_filter_conf_max"],
         model_paths: str | None = CONFORMER_SETTINGS["model_paths"] or None,
         device: str = CONFORMER_SETTINGS["device"],
@@ -237,6 +231,7 @@ class ConformerGenerator:
         self.max_iters = max_iters
         self.mmff_window_kcal = mmff_window_kcal
         self.rmsd_cluster_thresh = rmsd_cluster_thresh
+        self.max_automorphisms = max_automorphisms
         self.pre_filter_conf_max = pre_filter_conf_max
         self.model_paths = model_paths
         self.device = device
@@ -306,9 +301,7 @@ class ConformerGenerator:
     def _cached_mh1() -> str | None:
         """Find already-downloaded mh-1 weights in the MACE cache.
 
-        The cache may spell the file `mace-mh-1.model` or with the
-        punctuation stripped, so the match is made on the normalised name
-        rather than an exact one.
+        The match is made on the normalised name rather than an exact one.
 
         Returns
         -------
@@ -334,9 +327,8 @@ class ConformerGenerator:
         """Embed and force-field optimise a pool of conformers.
 
         The size of the pool is scaled with the rotatable bond count, so that
-        flexible molecules are sampled more heavily, and then capped. MMFF94
-        is used where it has parameters for every atom, and UFF otherwise
-        (MMFF94 covers neither B, As and Se nor the alkali metals).
+        flexible molecules are sampled more heavily, up to a cap. MMFF94
+        is used where it has parameters for every atom, and UFF otherwise.
 
         Parameters
         ----------
@@ -351,9 +343,8 @@ class ConformerGenerator:
         conf_ids
             Identifiers of the embedded conformers.
         results
-            One status and energy pair per conformer, in the order of the
-            identifiers; a non-zero status marks an optimisation that did
-            not converge.
+            One status and energy pair per conformer; a non-zero status marks
+            an optimisation that did not converge.
 
         Raises
         ------
@@ -417,10 +408,11 @@ class ConformerGenerator:
         conf_ids: list[int],
         results: list[tuple[int, float]],
     ) -> ConformerEnsemble:
-        """Relax the selected conformers and assemble the ensemble.
+        """Relax the selected conformers and assemble the conformer ensemble.
 
-        The cluster representatives are relaxed one at a time with the MLIP,
-        the ones that did not converge are dropped, the rest are sorted by
+        The cluster representatives (conformer with lowest force-field energy
+        of the cluster) are relaxed one at a time with the MLIP, the ones that
+        do not converge are dropped. The resulting conformers are sorted by
         energy and deduplicated, and the lowest minima are returned.
 
         Parameters
@@ -539,6 +531,84 @@ class ConformerGenerator:
             multiplicity=multiplicity,
         )
 
+    @staticmethod
+    def _strip_terminal_atoms(mol_no_h: Chem.Mol) -> Chem.Mol:
+        """Drop heavy atoms bonded to only one other heavy atom.
+
+        Such atoms are the fluorines of a CF3 group, the methyls of an
+        isopropyl, or the methyl of a methoxy (i.e., groups whose rotation
+        is not a conformational degree of freedom). Their atoms are
+        interchangeable, which is what makes the symmetry-aware RMSD
+        expensive to evaluate. The skeleton that defines the conformer shape
+        is left untouched.
+
+        Parameters
+        ----------
+        mol_no_h
+            Heavy-atom molecule, carrying the embedded conformers.
+
+        Returns
+        -------
+        core
+            The same molecule without its terminal heavy atoms. Conformers
+            are carried over, minus the dropped coordinates.
+
+        """
+        core = Chem.RWMol(mol_no_h)
+        terminal = [
+            atom.GetIdx()
+            for atom in mol_no_h.GetAtoms()
+            if atom.GetDegree() == 1
+        ]
+        for idx in sorted(terminal, reverse=True):
+            core.RemoveAtom(idx)
+        return core.GetMol()
+
+    def _rmsd_reference(self, mol_no_h: Chem.Mol, smiles: str) -> Chem.Mol:
+        """Choose the molecule that the clustering RMSD is measured on.
+
+        A molecule carrying many interchangeable terminal groups (e.g., CF3,
+        isopropyl, OMe ect.) can make the distance matrix of GetBestRMS
+        prohibitively expensive, thus above max_automorphisms the terminal
+        atoms are dropped.
+
+        Parameters
+        ----------
+        mol_no_h
+            Heavy-atom molecule, carrying the embedded conformers.
+        smiles
+            SMILES of the molecule, used to identify it in the warning.
+
+        Returns
+        -------
+        reference
+            Either the molecule unchanged, or its stripped core.
+
+        """
+        n_automorphisms = len(
+            mol_no_h.GetSubstructMatches(
+                mol_no_h,
+                uniquify=False,
+                useChirality=False,
+                maxMatches=self.max_automorphisms,
+            )
+        )
+        if n_automorphisms < self.max_automorphisms:
+            return mol_no_h
+
+        core = self._strip_terminal_atoms(mol_no_h)
+
+        logger.warning(
+            "%s: at least %d symmetry mappings; clustering on the %d-atom "
+            "core instead of all %d heavy atoms (%d terminal atoms dropped)",
+            smiles,
+            self.max_automorphisms,
+            core.GetNumAtoms(),
+            mol_no_h.GetNumAtoms(),
+            mol_no_h.GetNumAtoms() - core.GetNumAtoms(),
+        )
+        return core
+
     def _cluster_conf_select(
         self,
         mol: Chem.Mol,
@@ -547,11 +617,10 @@ class ConformerGenerator:
     ) -> tuple[list[int], dict[int, float]]:
         """Choose which force-field conformers are worth relaxing.
 
-        Conformers that failed to converge are dropped, those outside the
-        energy window are discarded, and the rest are clustered on
-        heavy-atom RMSD so that only one representative per shape survives.
-        The representatives are returned lowest energy first, truncated to
-        the pre-filter cap.
+        Conformers that failed to converge or those outside the energy window
+        are dropped. The rest are clustered on heavy-atom RMSD so that only one
+        representative (the lowest energy one) per shape / cluster survives.
+        The representatives truncated to a cap (to limit MLIP calculations).
 
         Parameters
         ----------
@@ -604,13 +673,17 @@ class ConformerGenerator:
         # Cluster the surviving conformers on heavy-atom RMSD and energy
         mol_no_h = Chem.RemoveHs(mol)
 
+        # Check if the mol has too many automorphisms, strip terminal atoms if
+        # necessary
+        rmsd_mol = self._rmsd_reference(mol_no_h, smiles)
+
         # Create a new molecule with only the conformers in the energy window
-        cluster_mol = Chem.Mol(mol_no_h)
+        cluster_mol = Chem.Mol(rmsd_mol)
         cluster_mol.RemoveAllConformers()
         kept_ids: list[int] = []
         for conf_id in ff_in_window:
             cluster_mol.AddConformer(
-                Chem.Conformer(mol_no_h.GetConformer(conf_id)), assignId=True
+                Chem.Conformer(rmsd_mol.GetConformer(conf_id)), assignId=True
             )
             kept_ids.append(conf_id)
 
@@ -664,9 +737,7 @@ class ConformerGenerator:
 
         Two conformers are judged duplicates only if they agree on both
         counts: their energies are within the deduplication window and their
-        heavy-atom RMSD is below the deduplication threshold. The energy
-        comparison is the cheap one and is made first, so most pairs never
-        reach the alignment.
+        heavy-atom RMSD is below the deduplication threshold.
 
         Parameters
         ----------
